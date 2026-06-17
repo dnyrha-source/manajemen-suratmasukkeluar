@@ -4,8 +4,6 @@
  */
 
 import express, { Request, Response, NextFunction } from "express";
-import { createRequire } from "module";
-const require = createRequire(import.meta.url);
 import path from "path";
 import fs from "fs";
 import { createServer as createViteServer } from "vite";
@@ -235,22 +233,23 @@ function hashPassword(password: string): string {
   return crypto.createHash("sha256").update(password).digest("hex");
 }
 
+// Read Firebase configuration dynamically from disk (fully compatible across ESM runtimes & Vercel)
+let firebaseConfig: any = null;
+try {
+  const firebaseConfigPath = path.join(process.cwd(), "firebase-applet-config.json");
+  if (fs.existsSync(firebaseConfigPath)) {
+    firebaseConfig = JSON.parse(fs.readFileSync(firebaseConfigPath, "utf-8"));
+  }
+} catch (err) {
+  console.error("[FIREBASE] Error reading firebase-applet-config.json:", err);
+}
+
 // In-Memory DB Cache
 let cachedStore: DBStore | null = null;
 
 // Initialize Firebase SDK
 let db: Firestore | null = null;
 try {
-  let firebaseConfig: any = null;
-  const firebaseConfigPath = path.join(process.cwd(), "firebase-applet-config.json");
-  if (fs.existsSync(firebaseConfigPath)) {
-    firebaseConfig = JSON.parse(fs.readFileSync(firebaseConfigPath, "utf-8"));
-  } else {
-    try {
-      firebaseConfig = require("./firebase-applet-config.json");
-    } catch (_) {}
-  }
-
   if (firebaseConfig) {
     const firebaseApp = initializeApp(firebaseConfig);
     let dbId: string | undefined = firebaseConfig.firestoreDatabaseId;
@@ -260,7 +259,7 @@ try {
     db = getFirestore(firebaseApp, dbId);
     console.log("[FIREBASE] Initialized correctly with project:", firebaseConfig.projectId, "and database:", dbId || "(default)");
   } else {
-    console.warn("[FIREBASE] firebase-applet-config.json not found on disk or in bundle.");
+    console.warn("[FIREBASE] firebase-applet-config.json not found on disk.");
   }
 } catch (err) {
   console.error("[FIREBASE] Failed to initialize Firestore:", err);
