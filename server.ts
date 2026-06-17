@@ -326,6 +326,33 @@ async function loadFromFirestore(): Promise<DBStore | null> {
   }
 }
 
+let firestoreLoadPromise: Promise<void> | null = null;
+
+function ensureFirestoreLoaded(): Promise<void> {
+  if (!db) return Promise.resolve();
+  if (firestoreLoadPromise) return firestoreLoadPromise;
+
+  firestoreLoadPromise = (async () => {
+    try {
+      console.log("[FIREBASE] Initializing and loading from Firestore...");
+      const cloudStore = await loadFromFirestore();
+      if (cloudStore && cloudStore.users && cloudStore.users.length > 0) {
+        cachedStore = cloudStore;
+        console.log("[FIREBASE] Cache synchronized with cloud successfully.");
+      } else {
+        console.log("[FIREBASE] Firestore has no user data. Seeding database to cloud...");
+        const store = getDB();
+        await syncToFirestore(store);
+        console.log("[FIREBASE] Seeded database to Firestore successfully.");
+      }
+    } catch (err) {
+      console.error("[FIREBASE] Error during Firestore load/sync:", err);
+    }
+  })();
+
+  return firestoreLoadPromise;
+}
+
 // Read database from FS or Cache
 function getDB(): DBStore {
   if (cachedStore) {
@@ -376,50 +403,52 @@ function addLog(userId: string, username: string, aksi: string, modul: ActivityL
   saveDB(store);
 }
 
+const app = express();
+export { app };
+
+// Configure JSON body parser with generous limit for uploaded file scans globally
+app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ extended: true, limit: "10mb" }));
+
+// Middleware to ensure Firestore is fully loaded before handling any API requests (critical for serverless deploy)
+app.use(async (req, res, next) => {
+  if (req.path.startsWith("/api/")) {
+    try {
+      await ensureFirestoreLoaded();
+    } catch (err) {
+      console.error("[FIREBASE] Middleware ensure load failed:", err);
+    }
+  }
+  next();
+});
+
+// Helper middleware for auth verify globally
+const verifyToken = (req: Request, res: Response, next: NextFunction) => {
+  const authHeader = req.headers["authorization"];
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return res.status(401).json({ message: "Sesi tidak ditemukan. Silakan login kembali." });
+  }
+  const token = authHeader.split(" ")[1];
+  const store = getDB();
+  const user = store.users.find(u => u.id === token && u.aktif);
+  if (!user) {
+    return res.status(401).json({ message: "Sesi tidak valid / Akun nonaktif." });
+  }
+  // Inject user info to request
+  (req as any).user = user;
+  next();
+};
+
 async function startServer() {
-  const app = express();
   const PORT = 3000;
 
   // Load database from Firestore upon startup asynchronously in background so it does not block port binding and startup
   if (db) {
-    console.log("[FIREBASE] Initial Firestore synchronization queued in background...");
-    loadFromFirestore()
-      .then(async (cloudStore) => {
-        if (cloudStore && cloudStore.users && cloudStore.users.length > 0) {
-          cachedStore = cloudStore;
-          console.log("[FIREBASE] Cache synchronized with cloud successfully.");
-        } else {
-          console.log("[FIREBASE] Firestore has no user data. Seeding database to cloud...");
-          const store = getDB();
-          await syncToFirestore(store);
-          console.log("[FIREBASE] Seeded database to Firestore successfully.");
-        }
-      })
-      .catch((err) => {
-        console.error("[FIREBASE] Error during initial background load/sync:", err);
-      });
+    console.log("[FIREBASE] Persistent startup Firestore synchronization initiated...");
+    ensureFirestoreLoaded().catch((err) => {
+      console.error("[FIREBASE] Persistent startup Firestore synchronization failed:", err);
+    });
   }
-
-  // Configure JSON body parser with generous limit for uploaded file scans (up to 5MB easily)
-  app.use(express.json({ limit: "10mb" }));
-  app.use(express.urlencoded({ extended: true, limit: "10mb" }));
-
-  // Helper middleware for auth verify
-  const verifyToken = (req: Request, res: Response, next: NextFunction) => {
-    const authHeader = req.headers["authorization"];
-    if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      return res.status(401).json({ message: "Sesi tidak ditemukan. Silakan login kembali." });
-    }
-    const token = authHeader.split(" ")[1];
-    const store = getDB();
-    const user = store.users.find(u => u.id === token && u.aktif);
-    if (!user) {
-      return res.status(401).json({ message: "Sesi tidak valid / Akun nonaktif." });
-    }
-    // Inject user info to request
-    (req as any).user = user;
-    next();
-  };
 
   // Auth APIs
   app.post("/api/auth/login", (req: Request, res: Response) => {
