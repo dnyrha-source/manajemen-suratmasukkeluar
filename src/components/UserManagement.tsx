@@ -41,6 +41,7 @@ export default function UserManagement({
   const [showModal, setShowModal] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(false);
+  const [deleteConfirmUser, setDeleteConfirmUser] = useState<User | null>(null);
 
   // Form states
   const [formUsername, setFormUsername] = useState("");
@@ -230,15 +231,7 @@ export default function UserManagement({
                       
                       {u.username !== "superadmin" && u.id !== currentUser.id && (
                         <button
-                          onClick={async () => {
-                            if (window.confirm(`Apakah Anda yakin ingin menghapus pengguna '${u.nama_lengkap}' (@${u.username}) secara permanen?`)) {
-                              try {
-                                await onDeleteUser(u.id, u.username);
-                              } catch (err: any) {
-                                alert(err.message || "Gagal menghapus pengguna");
-                              }
-                            }
-                          }}
+                          onClick={() => setDeleteConfirmUser(u)}
                           className="p-2 text-red-600 bg-red-50 hover:bg-red-100 rounded-lg transition-colors cursor-pointer"
                           title="Hapus Pengguna"
                         >
@@ -370,6 +363,57 @@ export default function UserManagement({
                 </div>
 
               </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Delete User Confirmation Box */}
+      <AnimatePresence>
+        {deleteConfirmUser && (
+          <div className="fixed inset-0 z-50 overflow-y-auto flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs font-sans">
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white rounded-3xl w-full max-w-sm p-6 border border-slate-100 shadow-2xl space-y-4"
+              id="modal-delete-user-confirm"
+            >
+              <div className="flex items-center gap-2.5 text-red-650">
+                <div className="p-2 bg-red-100 rounded-lg">
+                  <Trash2 className="h-5 w-5 text-red-600" />
+                </div>
+                <h3 className="font-bold text-base font-display text-slate-800">Hapus Akun Pengguna</h3>
+              </div>
+              <p className="text-xs text-slate-500 leading-relaxed">
+                Apakah Anda yakin ingin menghapus pengguna <strong className="text-slate-800">@{deleteConfirmUser.username}</strong> ({deleteConfirmUser.nama_lengkap}) secara permanen dari sistem? Tindakan ini tidak dapat dibatalkan.
+              </p>
+              <div className="flex items-center justify-end gap-2.5 pt-2">
+                <button
+                  type="button"
+                  id="btn-confirm-delete-cancel"
+                  onClick={() => setDeleteConfirmUser(null)}
+                  className="px-4 py-1.5 border border-slate-200 rounded-xl text-slate-500 text-xs font-semibold hover:bg-slate-50 cursor-pointer"
+                >
+                  Batal
+                </button>
+                <button
+                  type="button"
+                  id="btn-confirm-delete-action"
+                  onClick={async () => {
+                    const u = deleteConfirmUser;
+                    setDeleteConfirmUser(null);
+                    try {
+                      await onDeleteUser(u.id, u.username);
+                    } catch (e: any) {
+                      alert(e.message || "Gagal menghapus pengguna.");
+                    }
+                  }}
+                  className="px-4 py-1.5 text-white bg-red-600 hover:bg-red-700 text-xs font-bold rounded-xl cursor-pointer"
+                >
+                  Hapus Permanen
+                </button>
+              </div>
             </motion.div>
           </div>
         )}

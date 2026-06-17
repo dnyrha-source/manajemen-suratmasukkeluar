@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect } from "react";
 import { loginApi, getPublicConfigApi } from "../lib/api";
-import { Lock, Mail, User as UserIcon, Keyboard, AlertCircle, Sparkles } from "lucide-react";
+import { Lock, Mail, User as UserIcon, AlertCircle, Sparkles } from "lucide-react";
 import { motion } from "motion/react";
 
 interface LoginProps {
@@ -43,12 +43,6 @@ export default function Login({ onLoginSuccess }: LoginProps) {
     } finally {
       setLoading(false);
     }
-  };
-
-  const fillCredentials = (user: string, pass: string) => {
-    setUsername(user);
-    setPassword(pass);
-    setError(null);
   };
 
   return (
@@ -153,53 +147,6 @@ export default function Login({ onLoginSuccess }: LoginProps) {
               </button>
             </div>
           </form>
-
-          {/* Quick Credential Hints - Flat Clean Border Box */}
-          <div className="mt-6 border-t border-slate-100 pt-5">
-            <div className="flex items-center gap-1.5 text-[9px] font-extrabold uppercase tracking-widest text-slate-400 mb-3.5 font-mono">
-              <Keyboard className="h-3.5 w-3.5" />
-              Kredensial Pengujian (Demo Akun)
-            </div>
-            
-            <div className="grid grid-cols-2 gap-2 text-[11px]">
-              <button
-                type="button"
-                onClick={() => fillCredentials("superadmin", "superadmin123")}
-                className="p-2.5 rounded-xl border border-slate-150 bg-slate-50/50 hover:bg-blue-50/40 hover:border-blue-200 text-left transition-all cursor-pointer"
-              >
-                <div className="font-bold text-slate-800 leading-normal text-xs mb-1">Super Admin</div>
-                <div className="text-slate-500 text-[9px] font-mono leading-tight">U: superadmin</div>
-                <div className="text-slate-400 text-[9px] font-mono leading-tight">P: superadmin123</div>
-              </button>
-              <button
-                type="button"
-                onClick={() => fillCredentials("admin_pns", "admin123")}
-                className="p-2.5 rounded-xl border border-slate-150 bg-slate-50/50 hover:bg-blue-50/40 hover:border-blue-200 text-left transition-all cursor-pointer"
-              >
-                <div className="font-bold text-slate-800 leading-normal text-xs mb-1">Admin PNS</div>
-                <div className="text-slate-500 text-[9px] font-mono leading-tight">U: admin_pns</div>
-                <div className="text-slate-400 text-[9px] font-mono leading-tight">P: admin123</div>
-              </button>
-              <button
-                type="button"
-                onClick={() => fillCredentials("operator_surat", "operator123")}
-                className="p-2.5 rounded-xl border border-slate-150 bg-slate-50/50 hover:bg-blue-50/40 hover:border-blue-200 text-left transition-all cursor-pointer"
-              >
-                <div className="font-bold text-slate-800 leading-normal text-xs mb-1">Operator</div>
-                <div className="text-slate-500 text-[9px] font-mono leading-tight">U: operator_surat</div>
-                <div className="text-slate-400 text-[9px] font-mono leading-tight">P: operator123</div>
-              </button>
-              <button
-                type="button"
-                onClick={() => fillCredentials("viewer_pimpinan", "viewer123")}
-                className="p-2.5 rounded-xl border border-slate-150 bg-slate-50/50 hover:bg-blue-50/40 hover:border-blue-200 text-left transition-all cursor-pointer"
-              >
-                <div className="font-bold text-slate-800 leading-normal text-xs mb-1">Viewer Pimpinan</div>
-                <div className="text-slate-500 text-[9px] font-mono leading-tight">U: viewer_pimpinan</div>
-                <div className="text-slate-400 text-[9px] font-mono leading-tight">P: viewer123</div>
-              </button>
-            </div>
-          </div>
         </motion.div>
       </div>
 

@@ -293,18 +293,25 @@ async function syncToFirestore(store: DBStore) {
 async function loadFromFirestore(): Promise<DBStore | null> {
   if (!db) return null;
   try {
-    const configSnap = await getDoc(doc(db, "config", "settings"));
-    if (!configSnap.exists()) {
+    const usersSnap = await getDocs(collection(db, "users"));
+    if (usersSnap.empty) {
       return null;
     }
-    const config = configSnap.data() as ConfigSettings;
+
+    const configSnap = await getDoc(doc(db, "config", "settings"));
+    let config: ConfigSettings;
+    if (configSnap.exists()) {
+      config = configSnap.data() as ConfigSettings;
+    } else {
+      config = INITIAL_STORE.config;
+    }
 
     const loadCollection = async (colName: string): Promise<any[]> => {
       const snap = await getDocs(collection(db, colName));
       return snap.docs.map(docSnap => docSnap.data());
     };
 
-    const users = await loadCollection("users") as User[];
+    const users = usersSnap.docs.map(docSnap => docSnap.data()) as User[];
     const surat_masuk = await loadCollection("surat_masuk") as SuratMasuk[];
     const surat_keluar = await loadCollection("surat_keluar") as SuratKeluar[];
     const log_aktivitas = await loadCollection("log_aktivitas") as ActivityLog[];
@@ -371,7 +378,7 @@ function getDB(): DBStore {
 }
 
 // Write database to cache, FS, and cloud
-function saveDB(store: DBStore) {
+async function saveDB(store: DBStore): Promise<void> {
   cachedStore = store;
   try {
     fs.writeFileSync(DB_FILE, JSON.stringify(store, null, 2));
@@ -380,14 +387,16 @@ function saveDB(store: DBStore) {
   }
 
   if (db) {
-    syncToFirestore(store).catch((err) => {
-      console.error("[FIREBASE] Asynchronous cloud backup failed:", err);
-    });
+    try {
+      await syncToFirestore(store);
+    } catch (err) {
+      console.error("[FIREBASE] Cloud backup failed:", err);
+    }
   }
 }
 
 // Log action helper
-function addLog(userId: string, username: string, aksi: string, modul: ActivityLog['modul'], dataId: string) {
+async function addLog(userId: string, username: string, aksi: string, modul: ActivityLog['modul'], dataId: string): Promise<void> {
   const store = getDB();
   const newLog: ActivityLog = {
     id: `log_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
@@ -399,7 +408,7 @@ function addLog(userId: string, username: string, aksi: string, modul: ActivityL
     waktu: new Date().toISOString()
   };
   store.log_aktivitas.unshift(newLog); // Prepend so newest is first
-  saveDB(store);
+  await saveDB(store);
 }
 
 const app = express();
@@ -447,7 +456,7 @@ if (!process.env.VERCEL && db) {
 }
 
 // Auth APIs
-  app.post("/api/auth/login", (req: Request, res: Response) => {
+  app.post("/api/auth/login", async (req: Request, res: Response) => {
     const { username, password } = req.body;
     if (!username || !password) {
       return res.status(400).json({ message: "Username dan Password wajib diisi." });
@@ -497,19 +506,24 @@ if (!process.env.VERCEL && db) {
 
     // Success - using user.id as token for simplified direct auth
     const token = user.id;
-    addLog(user.id, user.username, "Login sukses ke sistem", "Dashboard", user.id);
+    await addLog(user.id, user.username, "Login sukses ke sistem", "Dashboard", user.id);
 
     const { password_hash, ...safeUser } = user;
     res.json({ token, user: safeUser });
   });
 
-  app.post("/api/auth/logout", verifyToken, (req: Request, res: Response) => {
+  app.get("/api/auth/me", verifyToken, (req: Request, res: Response) => {
+    const { password_hash, ...safeUser } = (req as any).user;
+    res.json(safeUser);
+  });
+
+  app.post("/api/auth/logout", verifyToken, async (req: Request, res: Response) => {
     const user = (req as any).user;
-    addLog(user.id, user.username, "Logout dari sistem", "Dashboard", user.id);
+    await addLog(user.id, user.username, "Logout dari sistem", "Dashboard", user.id);
     res.json({ success: true, message: "Berhasil logout." });
   });
 
-  app.post("/api/auth/change-password", verifyToken, (req: Request, res: Response) => {
+  app.post("/api/auth/change-password", verifyToken, async (req: Request, res: Response) => {
     const user = (req as any).user;
     const { oldPassword, newPassword } = req.body;
 
@@ -528,9 +542,9 @@ if (!process.env.VERCEL && db) {
     }
 
     dbUser.password_hash = hashPassword(newPassword);
-    saveDB(store);
+    await saveDB(store);
 
-    addLog(user.id, user.username, "Mengubah password sendiri", "Dashboard", user.id);
+    await addLog(user.id, user.username, "Mengubah password sendiri", "Dashboard", user.id);
     res.json({ success: true, message: "Password berhasil diperbarui." });
   });
 
@@ -545,7 +559,7 @@ if (!process.env.VERCEL && db) {
     res.json(safeUsers);
   });
 
-  app.post("/api/users", verifyToken, (req: Request, res: Response) => {
+  app.post("/api/users", verifyToken, async (req: Request, res: Response) => {
     const requestUser = (req as any).user;
     if (requestUser.role !== "Super Admin") {
       return res.status(403).json({ message: "Akses ditolak." });
@@ -573,15 +587,15 @@ if (!process.env.VERCEL && db) {
     };
 
     store.users.push(newUser);
-    saveDB(store);
+    await saveDB(store);
 
-    addLog(requestUser.id, requestUser.username, `Membuat akun pengguna baru: ${username}`, "Manajemen Pengguna", newUser.id);
+    await addLog(requestUser.id, requestUser.username, `Membuat akun pengguna baru: ${username}`, "Manajemen Pengguna", newUser.id);
 
     const { password_hash, ...safeUser } = newUser;
     res.status(201).json(safeUser);
   });
 
-  app.put("/api/users/:id", verifyToken, (req: Request, res: Response) => {
+  app.put("/api/users/:id", verifyToken, async (req: Request, res: Response) => {
     const requestUser = (req as any).user;
     if (requestUser.role !== "Super Admin") {
       return res.status(403).json({ message: "Akses ditolak." });
@@ -611,14 +625,14 @@ if (!process.env.VERCEL && db) {
       dbUser.aktif = aktif;
     }
 
-    saveDB(store);
-    addLog(requestUser.id, requestUser.username, `Memperbarui akun pengguna: ${dbUser.username}`, "Manajemen Pengguna", dbUser.id);
+    await saveDB(store);
+    await addLog(requestUser.id, requestUser.username, `Memperbarui akun pengguna: ${dbUser.username}`, "Manajemen Pengguna", dbUser.id);
 
     const { password_hash, ...safeUser } = dbUser;
     res.json(safeUser);
   });
 
-  app.delete("/api/users/:id", verifyToken, (req: Request, res: Response) => {
+  app.delete("/api/users/:id", verifyToken, async (req: Request, res: Response) => {
     const requestUser = (req as any).user;
     if (requestUser.role !== "Super Admin") {
       return res.status(403).json({ message: "Akses ditolak." });
@@ -641,8 +655,8 @@ if (!process.env.VERCEL && db) {
     }
 
     store.users.splice(dbUserIndex, 1);
-    saveDB(store);
-    addLog(requestUser.id, requestUser.username, `Menghapus akun pengguna: ${dbUser.username}`, "Manajemen Pengguna", dbUser.id);
+    await saveDB(store);
+    await addLog(requestUser.id, requestUser.username, `Menghapus akun pengguna: ${dbUser.username}`, "Manajemen Pengguna", dbUser.id);
 
     res.json({ success: true, message: "Pengguna berhasil dihapus." });
   });
@@ -653,7 +667,7 @@ if (!process.env.VERCEL && db) {
     res.json(store.surat_masuk);
   });
 
-  app.post("/api/surat-masuk", verifyToken, (req: Request, res: Response) => {
+  app.post("/api/surat-masuk", verifyToken, async (req: Request, res: Response) => {
     const requestUser = (req as any).user;
     if (requestUser.role === "Viewer") {
       return res.status(403).json({ message: "Akun Viewer tidak memiliki izin menambah surat masuk." });
@@ -715,13 +729,13 @@ if (!process.env.VERCEL && db) {
     };
 
     store.surat_masuk.push(newSurat);
-    saveDB(store);
+    await saveDB(store);
 
-    addLog(requestUser.id, requestUser.username, `Menambah Surat Masuk No. Agenda ${no_agenda}`, "Surat Masuk", newSurat.id);
+    await addLog(requestUser.id, requestUser.username, `Menambah Surat Masuk No. Agenda ${no_agenda}`, "Surat Masuk", newSurat.id);
     res.status(201).json(newSurat);
   });
 
-  app.put("/api/surat-masuk/:id", verifyToken, (req: Request, res: Response) => {
+  app.put("/api/surat-masuk/:id", verifyToken, async (req: Request, res: Response) => {
     const requestUser = (req as any).user;
     if (requestUser.role === "Viewer") {
       return res.status(403).json({ message: "Akun Viewer tidak memiliki izin mengubah data." });
@@ -765,12 +779,12 @@ if (!process.env.VERCEL && db) {
       surat.lampiran_url = lampiran_url;
     }
 
-    saveDB(store);
-    addLog(requestUser.id, requestUser.username, `Mengubah Surat Masuk No. Agenda ${surat.no_agenda}`, "Surat Masuk", id);
+    await saveDB(store);
+    await addLog(requestUser.id, requestUser.username, `Mengubah Surat Masuk No. Agenda ${surat.no_agenda}`, "Surat Masuk", id);
     res.json(surat);
   });
 
-  app.delete("/api/surat-masuk/:id", verifyToken, (req: Request, res: Response) => {
+  app.delete("/api/surat-masuk/:id", verifyToken, async (req: Request, res: Response) => {
     const requestUser = (req as any).user;
     // Section 2.1: Super Admin & Admin can delete; Operator/Viewer cannot.
     if (requestUser.role !== "Super Admin" && requestUser.role !== "Admin") {
@@ -787,9 +801,9 @@ if (!process.env.VERCEL && db) {
 
     const agendaNo = store.surat_masuk[index].no_agenda;
     store.surat_masuk.splice(index, 1);
-    saveDB(store);
+    await saveDB(store);
 
-    addLog(requestUser.id, requestUser.username, `Menghapus Surat Masuk No. Agenda ${agendaNo}`, "Surat Masuk", id);
+    await addLog(requestUser.id, requestUser.username, `Menghapus Surat Masuk No. Agenda ${agendaNo}`, "Surat Masuk", id);
     res.json({ success: true, message: "Surat masuk berhasil dihapus." });
   });
 
@@ -800,7 +814,7 @@ if (!process.env.VERCEL && db) {
     res.json(store.surat_keluar);
   });
 
-  app.post("/api/surat-keluar", verifyToken, (req: Request, res: Response) => {
+  app.post("/api/surat-keluar", verifyToken, async (req: Request, res: Response) => {
     const requestUser = (req as any).user;
     if (requestUser.role === "Viewer") {
       return res.status(403).json({ message: "Akses ditolak." });
@@ -865,13 +879,13 @@ if (!process.env.VERCEL && db) {
     };
 
     store.surat_keluar.push(newSurat);
-    saveDB(store);
+    await saveDB(store);
 
-    addLog(requestUser.id, requestUser.username, `Membuat Surat Keluar No. Surat ${formattedNoSurat}`, "Surat Keluar", newSurat.id);
+    await addLog(requestUser.id, requestUser.username, `Membuat Surat Keluar No. Surat ${formattedNoSurat}`, "Surat Keluar", newSurat.id);
     res.status(201).json(newSurat);
   });
 
-  app.put("/api/surat-keluar/:id", verifyToken, (req: Request, res: Response) => {
+  app.put("/api/surat-keluar/:id", verifyToken, async (req: Request, res: Response) => {
     const requestUser = (req as any).user;
     if (requestUser.role === "Viewer") {
       return res.status(403).json({ message: "Akses ditolak." });
@@ -915,12 +929,12 @@ if (!process.env.VERCEL && db) {
       surat.lampiran_url = lampiran_url;
     }
 
-    saveDB(store);
-    addLog(requestUser.id, requestUser.username, `Mengubah Surat Keluar No. Surat ${surat.no_surat}`, "Surat Keluar", id);
+    await saveDB(store);
+    await addLog(requestUser.id, requestUser.username, `Mengubah Surat Keluar No. Surat ${surat.no_surat}`, "Surat Keluar", id);
     res.json(surat);
   });
 
-  app.delete("/api/surat-keluar/:id", verifyToken, (req: Request, res: Response) => {
+  app.delete("/api/surat-keluar/:id", verifyToken, async (req: Request, res: Response) => {
     const requestUser = (req as any).user;
     if (requestUser.role !== "Super Admin" && requestUser.role !== "Admin") {
       return res.status(403).json({ message: "Hanya Admin & Super Admin yang diperbolehkan menghapus surat." });
@@ -936,9 +950,9 @@ if (!process.env.VERCEL && db) {
 
     const suratNo = store.surat_keluar[index].no_surat;
     store.surat_keluar.splice(index, 1);
-    saveDB(store);
+    await saveDB(store);
 
-    addLog(requestUser.id, requestUser.username, `Menghapus Surat Keluar No. Surat ${suratNo}`, "Surat Keluar", id);
+    await addLog(requestUser.id, requestUser.username, `Menghapus Surat Keluar No. Surat ${suratNo}`, "Surat Keluar", id);
     res.json({ success: true, message: "Surat keluar berhasil dihapus." });
   });
 
@@ -967,7 +981,7 @@ if (!process.env.VERCEL && db) {
     res.json(store.config);
   });
 
-  app.post("/api/config", verifyToken, (req: Request, res: Response) => {
+  app.post("/api/config", verifyToken, async (req: Request, res: Response) => {
     const requestUser = (req as any).user;
     if (requestUser.role !== "Super Admin") {
       return res.status(403).json({ message: "Hanya Super Admin yang dapat memperbarui pengaturan sistem." });
@@ -986,8 +1000,8 @@ if (!process.env.VERCEL && db) {
     if (apps_script_url !== undefined) store.config.apps_script_url = apps_script_url;
     if (logo_url !== undefined) store.config.logo_url = logo_url;
 
-    saveDB(store);
-    addLog(requestUser.id, requestUser.username, "Memperbarui konfigurasi sistem", "Pengaturan", "config");
+    await saveDB(store);
+    await addLog(requestUser.id, requestUser.username, "Memperbarui konfigurasi sistem", "Pengaturan", "config");
     res.json(store.config);
   });
 
@@ -1099,9 +1113,9 @@ if (!process.env.VERCEL && db) {
 
         // Update database connection state
         store.config.koneksi_status = "Connected";
-        saveDB(store);
+        await saveDB(store);
 
-        addLog(requestUser.id, requestUser.username, "Sinkronisasi ke Google Sheet sukses (via Apps Script)", "Pengaturan", "config");
+        await addLog(requestUser.id, requestUser.username, "Sinkronisasi ke Google Sheet sukses (via Apps Script)", "Pengaturan", "config");
 
         return res.json({
           success: true,
@@ -1169,7 +1183,7 @@ if (!process.env.VERCEL && db) {
       }
 
       if (storeDirty) {
-        saveDB(store);
+        await saveDB(store);
       }
 
       // 2. Query target Spreadsheet metadata
@@ -1334,9 +1348,9 @@ if (!process.env.VERCEL && db) {
 
       // Save database connection state
       store.config.koneksi_status = "Connected";
-      saveDB(store);
+      await saveDB(store);
 
-      addLog(requestUser.id, requestUser.username, `Sinkronisasi dinas ke Google Spreadsheet ID: ${spreadsheetId}`, "Pengaturan", "config");
+      await addLog(requestUser.id, requestUser.username, `Sinkronisasi dinas ke Google Spreadsheet ID: ${spreadsheetId}`, "Pengaturan", "config");
 
       res.json({
         success: true,

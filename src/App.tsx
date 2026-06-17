@@ -10,6 +10,7 @@ import {
   getLogsApi, 
   getConfigApi, 
   getUsersApi, 
+  getProfileApi,
   createUserApi, 
   updateUserApi,
   deleteUserApi,
@@ -89,40 +90,16 @@ export default function App() {
       }
 
       try {
-        // Simple direct local check on boot or bootstrap state from login response
         // Fetch configs to check token validity
         const cfg = await getConfigApi();
         setConfig(cfg);
         
-        // Form a client representation of logged-in user from token parsing
-        // In our server, user token equals their ID
-        const usersList = await fetchUsersIfSuperAdmin(storedToken);
-        const fetchedLogs = await getLogsApi().catch(() => []);
-        
-        // Set user details matching token
-        let foundUser = usersList?.find(u => u.id === storedToken);
-        if (!foundUser) {
-          // Fallback parsing from mock database matching predefined seed
-          const response = await fetch("/api/auth/login", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ username: "superadmin", password: "dummy" })
-          }).catch(() => null);
-          const mockUser = {
-            id: storedToken,
-            username: storedToken === "usr_1" ? "superadmin" : storedToken === "usr_2" ? "admin_pns" : storedToken === "usr_3" ? "operator_surat" : "viewer_pimpinan",
-            nama_lengkap: storedToken === "usr_1" ? "Administrator Utama" : storedToken === "usr_2" ? "Siti Rahma, S.Sos." : storedToken === "usr_3" ? "Budiman Setiawan" : "Drs. H. Ahmad Fauzi, M.Si",
-            email: "user@surat.go.id",
-            role: (storedToken === "usr_1" ? "Super Admin" : storedToken === "usr_2" ? "Admin" : storedToken === "usr_3" ? "Operator" : "Viewer") as any,
-            aktif: true,
-            dibuat_pada: ""
-          };
-          foundUser = mockUser;
-        }
+        // Fetch current user details dynamically from server based on stored token
+        const foundUser = await getProfileApi();
 
         setCurrentUser(foundUser);
         setToken(storedToken);
-        await loadAllSystemData();
+        await loadAllSystemData(foundUser);
       } catch (err) {
         console.error("Session verification failed:", err);
         localStorage.removeItem("surat_auth_token");
@@ -136,16 +113,8 @@ export default function App() {
     handleAuthInit();
   }, [token]);
 
-  const fetchUsersIfSuperAdmin = async (userId: string) => {
-    // Return mock check matching token
-    if (userId === "usr_1") {
-      return await getUsersApi().catch(() => []);
-    }
-    return [];
-  };
-
   // Main data synchronization block
-  const loadAllSystemData = async () => {
+  const loadAllSystemData = async (userProfile?: any) => {
     if (!localStorage.getItem("surat_auth_token")) return;
     setDataLoading(true);
     setGlobalError(null);
@@ -161,7 +130,8 @@ export default function App() {
       setLogs(l);
       setConfig(cfg);
 
-      if (currentUser?.role === "Super Admin") {
+      const effectiveUser = userProfile || currentUser;
+      if (effectiveUser?.role === "Super Admin") {
         const u = await getUsersApi();
         setUsers(u);
       }
@@ -173,11 +143,12 @@ export default function App() {
     }
   };
 
-  const handleLoginSuccess = (newToken: string, user: any) => {
+  const handleLoginSuccess = async (newToken: string, user: any) => {
     localStorage.setItem("surat_auth_token", newToken);
     setCurrentUser(user);
     setToken(newToken);
     setActiveTab("Dashboard");
+    await loadAllSystemData(user);
     showToast(`Selamat datang kembali, ${user.nama_lengkap}!`);
   };
 

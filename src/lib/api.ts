@@ -62,6 +62,15 @@ export async function getUsersApi(): Promise<User[]> {
   return res.json();
 }
 
+export async function getProfileApi(): Promise<User> {
+  const res = await fetch("/api/auth/me", { headers: getHeaders() });
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.message || "Gagal mengambil data profil");
+  }
+  return res.json();
+}
+
 export async function createUserApi(data: Partial<User> & { password?: string }): Promise<User> {
   const res = await fetch("/api/users", {
     method: "POST",
