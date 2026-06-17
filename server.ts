@@ -294,44 +294,41 @@ async function syncToFirestore(store: DBStore) {
 // Load whole state from Firestore
 async function loadFromFirestore(): Promise<DBStore | null> {
   if (!db) return null;
-  try {
-    const usersSnap = await getDocs(collection(db, "users"));
-    if (usersSnap.empty) {
-      return null;
-    }
-
-    const configSnap = await getDoc(doc(db, "config", "settings"));
-    let config: ConfigSettings;
-    if (configSnap.exists()) {
-      config = configSnap.data() as ConfigSettings;
-    } else {
-      config = INITIAL_STORE.config;
-    }
-
-    const loadCollection = async (colName: string): Promise<any[]> => {
-      const snap = await getDocs(collection(db, colName));
-      return snap.docs.map(docSnap => docSnap.data());
-    };
-
-    const users = usersSnap.docs.map(docSnap => docSnap.data()) as User[];
-    const surat_masuk = await loadCollection("surat_masuk") as SuratMasuk[];
-    const surat_keluar = await loadCollection("surat_keluar") as SuratKeluar[];
-    const log_aktivitas = await loadCollection("log_aktivitas") as ActivityLog[];
-
-    // Sort newest logs first
-    log_aktivitas.sort((a, b) => new Date(b.waktu).getTime() - new Date(a.waktu).getTime());
-
-    return {
-      users: users.filter(u => !!u.id),
-      surat_masuk: surat_masuk.filter(s => !!s.id),
-      surat_keluar: surat_keluar.filter(s => !!s.id),
-      log_aktivitas: log_aktivitas.filter(l => !!l.id),
-      config
-    };
-  } catch (err) {
-    console.error("[FIREBASE] Error loading from Cloud Firestore:", err);
+  
+  // Do not catch errors locally. Let them bubble up so ensureFirestoreLoaded knows if it is a real connection error
+  const usersSnap = await getDocs(collection(db, "users"));
+  if (usersSnap.empty) {
     return null;
   }
+
+  const configSnap = await getDoc(doc(db, "config", "settings"));
+  let config: ConfigSettings;
+  if (configSnap.exists()) {
+    config = configSnap.data() as ConfigSettings;
+  } else {
+    config = INITIAL_STORE.config;
+  }
+
+  const loadCollection = async (colName: string): Promise<any[]> => {
+    const snap = await getDocs(collection(db, colName));
+    return snap.docs.map(docSnap => docSnap.data());
+  };
+
+  const users = usersSnap.docs.map(docSnap => docSnap.data()) as User[];
+  const surat_masuk = await loadCollection("surat_masuk") as SuratMasuk[];
+  const surat_keluar = await loadCollection("surat_keluar") as SuratKeluar[];
+  const log_aktivitas = await loadCollection("log_aktivitas") as ActivityLog[];
+
+  // Sort newest logs first
+  log_aktivitas.sort((a, b) => new Date(b.waktu).getTime() - new Date(a.waktu).getTime());
+
+  return {
+    users: users.filter(u => !!u.id),
+    surat_masuk: surat_masuk.filter(s => !!s.id),
+    surat_keluar: surat_keluar.filter(s => !!s.id),
+    log_aktivitas: log_aktivitas.filter(l => !!l.id),
+    config
+  };
 }
 
 let firestoreLoadPromise: Promise<void> | null = null;
@@ -355,6 +352,8 @@ function ensureFirestoreLoaded(): Promise<void> {
       }
     } catch (err) {
       console.error("[FIREBASE] Error during Firestore load/sync:", err);
+      // Re-throw so that middleware is aware of connection/permission errors
+      throw err;
     }
   })();
 
@@ -452,6 +451,12 @@ app.use(async (req, res, next) => {
       await ensureFirestoreLoaded();
     } catch (err) {
       console.error("[FIREBASE] Middleware ensure load failed:", err);
+      // Reset the promise so we can retry on the next request
+      firestoreLoadPromise = null;
+      return res.status(503).json({
+        message: "Gagal menghubungkan ke database cloud. Silakan coba beberapa saat lagi.",
+        error: err instanceof Error ? err.message : String(err)
+      });
     }
   }
   next();
