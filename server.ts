@@ -4,6 +4,8 @@
  */
 
 import express, { Request, Response, NextFunction } from "express";
+import { createRequire } from "module";
+const require = createRequire(import.meta.url);
 import path from "path";
 import fs from "fs";
 import { createServer as createViteServer } from "vite";
@@ -239,9 +241,17 @@ let cachedStore: DBStore | null = null;
 // Initialize Firebase SDK
 let db: Firestore | null = null;
 try {
+  let firebaseConfig: any = null;
   const firebaseConfigPath = path.join(process.cwd(), "firebase-applet-config.json");
   if (fs.existsSync(firebaseConfigPath)) {
-    const firebaseConfig = JSON.parse(fs.readFileSync(firebaseConfigPath, "utf-8"));
+    firebaseConfig = JSON.parse(fs.readFileSync(firebaseConfigPath, "utf-8"));
+  } else {
+    try {
+      firebaseConfig = require("./firebase-applet-config.json");
+    } catch (_) {}
+  }
+
+  if (firebaseConfig) {
     const firebaseApp = initializeApp(firebaseConfig);
     let dbId: string | undefined = firebaseConfig.firestoreDatabaseId;
     if (!dbId || dbId === "(default)" || dbId.trim() === "") {
@@ -250,7 +260,7 @@ try {
     db = getFirestore(firebaseApp, dbId);
     console.log("[FIREBASE] Initialized correctly with project:", firebaseConfig.projectId, "and database:", dbId || "(default)");
   } else {
-    console.warn("[FIREBASE] firebase-applet-config.json not found.");
+    console.warn("[FIREBASE] firebase-applet-config.json not found on disk or in bundle.");
   }
 } catch (err) {
   console.error("[FIREBASE] Failed to initialize Firestore:", err);
@@ -439,18 +449,15 @@ const verifyToken = (req: Request, res: Response, next: NextFunction) => {
   next();
 };
 
-async function startServer() {
-  const PORT = 3000;
+// Initialize startup task if running locally/container
+if (!process.env.VERCEL && db) {
+  console.log("[FIREBASE] Persistent startup Firestore synchronization initiated...");
+  ensureFirestoreLoaded().catch((err) => {
+    console.error("[FIREBASE] Persistent startup Firestore synchronization failed:", err);
+  });
+}
 
-  // Load database from Firestore upon startup asynchronously in background so it does not block port binding and startup
-  if (db) {
-    console.log("[FIREBASE] Persistent startup Firestore synchronization initiated...");
-    ensureFirestoreLoaded().catch((err) => {
-      console.error("[FIREBASE] Persistent startup Firestore synchronization failed:", err);
-    });
-  }
-
-  // Auth APIs
+// Auth APIs
   app.post("/api/auth/login", (req: Request, res: Response) => {
     const { username, password } = req.body;
     if (!username || !password) {
@@ -1394,6 +1401,9 @@ async function startServer() {
     }
   });
 
+async function startServer() {
+  const PORT = 3000;
+
   // Vite middleware for development or Static server for production
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
@@ -1414,6 +1424,8 @@ async function startServer() {
   });
 }
 
-startServer().catch(err => {
-  console.error("Failed to start full-stack server:", err);
-});
+if (!process.env.VERCEL) {
+  startServer().catch(err => {
+    console.error("Failed to start full-stack server:", err);
+  });
+}
