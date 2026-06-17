@@ -1,0 +1,6 @@
+{
+  "name": "Sistem Manajemen Surat",
+  "description": "Sistem Manajemen Surat Masuk & Surat Keluar digital dengan dashboard statistik, ekspor, pencatatan log, dan simulasi sinkronisasi database Spreadsheet.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

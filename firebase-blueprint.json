@@ -1,0 +1,282 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User account configuration and role mapping",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier of the user"
+        },
+        "username": {
+          "type": "string",
+          "description": "Username credential"
+        },
+        "password_hash": {
+          "type": "string",
+          "description": "SHA-256 hashed password"
+        },
+        "nama_lengkap": {
+          "type": "string",
+          "description": "Full name of the officer"
+        },
+        "email": {
+          "type": "string",
+          "description": "Email address of the user"
+        },
+        "role": {
+          "type": "string",
+          "description": "Authority level of the user (Super Admin, Admin, Operator, Viewer)"
+        },
+        "aktif": {
+          "type": "boolean",
+          "description": "Active state of the user account"
+        },
+        "dibuat_pada": {
+          "type": "string",
+          "description": "ISO timestamp of user creation"
+        }
+      },
+      "required": ["id", "username", "password_hash", "nama_lengkap", "role", "aktif"]
+    },
+    "SuratMasuk": {
+      "title": "SuratMasuk",
+      "description": "Incoming official letters metadata",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique record key"
+        },
+        "no_agenda": {
+          "type": "string",
+          "description": "Agency agenda tracking identifier"
+        },
+        "tgl_terima": {
+          "type": "string",
+          "description": "Date of reception"
+        },
+        "no_surat": {
+          "type": "string",
+          "description": "Physical index/letter identifier"
+        },
+        "tgl_surat": {
+          "type": "string",
+          "description": "Original date of mailing"
+        },
+        "pengirim": {
+          "type": "string",
+          "description": "Sender authority/institution"
+        },
+        "perihal": {
+          "type": "string",
+          "description": "Main subject of the document"
+        },
+        "ditujukan": {
+          "type": "string",
+          "description": "Intended target recipient department/officer"
+        },
+        "sifat": {
+          "type": "string",
+          "description": "Priority urgency of letters (Biasa, Penting, Rujukan, Rahasia)"
+        },
+        "keterangan": {
+          "type": "string",
+          "description": "Additional annotation notes"
+        },
+        "status": {
+          "type": "string",
+          "description": "Workflow phase (Baru, Proses, Selesai)"
+        },
+        "dibuat_oleh": {
+          "type": "string",
+          "description": "Authoring user username"
+        },
+        "dibuat_pada": {
+          "type": "string",
+          "description": "ISO timestamp of data creation"
+        },
+        "lampiran_name": {
+          "type": "string",
+          "description": "Filename of PDF attachment"
+        },
+        "lampiran_size": {
+          "type": "number",
+          "description": "Attachment size in bytes"
+        }
+      },
+      "required": ["id", "no_agenda", "tgl_terima", "no_surat", "tgl_surat", "pengirim", "perihal", "status"]
+    },
+    "SuratKeluar": {
+      "title": "SuratKeluar",
+      "description": "Outgoing official letters metadata",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique record key"
+        },
+        "no_surat": {
+          "type": "string",
+          "description": "Outgoing document registry number"
+        },
+        "tgl_surat": {
+          "type": "string",
+          "description": "Original date of letter creation"
+        },
+        "tujuan": {
+          "type": "string",
+          "description": "Destination authority/institution"
+        },
+        "perihal": {
+          "type": "string",
+          "description": "Main subject of the document"
+        },
+        "sifat": {
+          "type": "string",
+          "description": "Priority urgency of the letter (Biasa, Penting, Rahasia)"
+        },
+        "tgl_kirim": {
+          "type": "string",
+          "description": "Date of mailing"
+        },
+        "via": {
+          "type": "string",
+          "description": "Delivery channel"
+        },
+        "keterangan": {
+          "type": "string",
+          "description": "Additional annotation notes"
+        },
+        "status": {
+          "type": "string",
+          "description": "Workflow phase (Draft, Terkirim, Diterima)"
+        },
+        "dibuat_oleh": {
+          "type": "string",
+          "description": "Authoring user username"
+        },
+        "dibuat_pada": {
+          "type": "string",
+          "description": "ISO timestamp of data creation"
+        },
+        "lampiran_name": {
+          "type": "string",
+          "description": "Filename of PDF attachment"
+        },
+        "lampiran_size": {
+          "type": "number",
+          "description": "Attachment size in bytes"
+        }
+      },
+      "required": ["id", "no_surat", "tgl_surat", "tujuan", "perihal", "status"]
+    },
+    "ActivityLog": {
+      "title": "ActivityLog",
+      "description": "Operational audit log entry",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique log entry key"
+        },
+        "user_id": {
+          "type": "string",
+          "description": "User identifier"
+        },
+        "username": {
+          "type": "string",
+          "description": "Username of actor"
+        },
+        "aksi": {
+          "type": "string",
+          "description": "Action details/description"
+        },
+        "modul": {
+          "type": "string",
+          "description": "Target module area (Surat Masuk, Surat Keluar, Pengaturan, Pengguna)"
+        },
+        "data_id": {
+          "type": "string",
+          "description": "Key of involved data record"
+        },
+        "waktu": {
+          "type": "string",
+          "description": "ISO timestamp of the change"
+        }
+      },
+      "required": ["id", "user_id", "username", "aksi", "modul", "data_id", "waktu"]
+    },
+    "ConfigSettings": {
+      "title": "ConfigSettings",
+      "description": "Global institutional configuration parameters",
+      "type": "object",
+      "properties": {
+        "instansi_nama": {
+          "type": "string",
+          "description": "Organization name"
+        },
+        "instansi_kode": {
+          "type": "string",
+          "description": "Unique organization prefix"
+        },
+        "target_sheet_id": {
+          "type": "string",
+          "description": "Target Google Sheets Spreadsheet ID"
+        },
+        "drive_folder_id": {
+          "type": "string",
+          "description": "Google Drive Folder ID for attachments"
+        },
+        "koneksi_status": {
+          "type": "string",
+          "description": "Integration connectivity state"
+        },
+        "format_surat_keluar": {
+          "type": "string",
+          "description": "Serial template for outgoing letters"
+        },
+        "format_agenda_masuk": {
+          "type": "string",
+          "description": "Serial template for incoming letters"
+        },
+        "sync_method": {
+          "type": "string",
+          "description": "Google sync methodology used"
+        },
+        "apps_script_url": {
+          "type": "string",
+          "description": "Apps Script bridge deployment URL"
+        },
+        "logo_url": {
+          "type": "string",
+          "description": "Branding logo target URL"
+        }
+      },
+      "required": ["instansi_nama", "instansi_kode", "target_sheet_id", "drive_folder_id", "koneksi_status"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "User" },
+      "description": "Collection of organizational user profiles"
+    },
+    "/surat_masuk/{suratMasukId}": {
+      "schema": { "$ref": "SuratMasuk" },
+      "description": "Collection of incoming administrative records"
+    },
+    "/surat_keluar/{suratKeluarId}": {
+      "schema": { "$ref": "SuratKeluar" },
+      "description": "Collection of outgoing administrative records"
+    },
+    "/log_aktivitas/{logId}": {
+      "schema": { "$ref": "ActivityLog" },
+      "description": "Transactional audit tracks"
+    },
+    "/config/settings": {
+      "schema": { "$ref": "ConfigSettings" },
+      "description": "Global settings singleton document"
+    }
+  }
+}
