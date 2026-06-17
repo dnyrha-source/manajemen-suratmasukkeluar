@@ -236,6 +236,8 @@ import firebaseConfig from "./firebase-applet-config.json";
 
 // In-Memory DB Cache
 let cachedStore: DBStore | null = null;
+let lastLoadTime = 0;
+let currentLoadPromise: Promise<DBStore | null> | null = null;
 
 // Initialize Firebase SDK
 let db: Firestore | null = null;
@@ -343,11 +345,13 @@ function ensureFirestoreLoaded(): Promise<void> {
       const cloudStore = await loadFromFirestore();
       if (cloudStore && cloudStore.users && cloudStore.users.length > 0) {
         cachedStore = cloudStore;
+        lastLoadTime = Date.now();
         console.log("[FIREBASE] Cache synchronized with cloud successfully.");
       } else {
         console.log("[FIREBASE] Firestore has no user data. Seeding database to cloud...");
         const store = getDB();
         await syncToFirestore(store);
+        lastLoadTime = Date.now();
         console.log("[FIREBASE] Seeded database to Firestore successfully.");
       }
     } catch (err) {
@@ -358,6 +362,39 @@ function ensureFirestoreLoaded(): Promise<void> {
   })();
 
   return firestoreLoadPromise;
+}
+
+// Fetch the absolute freshest data from Firestore with parallel request throttling
+async function fetchLatestFromFirestore(): Promise<DBStore | null> {
+  if (!db) return null;
+  const now = Date.now();
+  
+  // 1-second TTL cache to avoid hitting Cloud limits during rapid simultaneous UI queries
+  if (cachedStore && (now - lastLoadTime < 1000)) {
+    return cachedStore;
+  }
+  
+  if (currentLoadPromise) {
+    return currentLoadPromise;
+  }
+  
+  currentLoadPromise = (async () => {
+    try {
+      const cloudStore = await loadFromFirestore();
+      if (cloudStore && cloudStore.users && cloudStore.users.length > 0) {
+        lastLoadTime = Date.now();
+        return cloudStore;
+      }
+      return null;
+    } catch (err) {
+      console.error("[FIREBASE] Error in fetchLatestFromFirestore:", err);
+      return null;
+    } finally {
+      currentLoadPromise = null;
+    }
+  })();
+  
+  return currentLoadPromise;
 }
 
 // Read database from FS or Cache
@@ -378,35 +415,10 @@ function getDB(): DBStore {
   return INITIAL_STORE;
 }
 
-let isSyncing = false;
-let pendingSync = false;
-
-async function triggerSync(): Promise<void> {
-  if (!db) return;
-  if (isSyncing) {
-    pendingSync = true;
-    return;
-  }
-  
-  isSyncing = true;
-  pendingSync = false;
-  
-  try {
-    const store = getDB();
-    await syncToFirestore(store);
-  } catch (err) {
-    console.error("[FIREBASE] Error during background syncToFirestore:", err);
-  } finally {
-    isSyncing = false;
-    if (pendingSync) {
-      triggerSync().catch(err => console.error("[FIREBASE] triggerSync queue error:", err));
-    }
-  }
-}
-
-// Write database to cache, FS, and cloud
+// Write database to cache, FS, and cloud synchronously/atomically
 async function saveDB(store: DBStore): Promise<void> {
   cachedStore = store;
+  lastLoadTime = Date.now(); // Mark as fresh to avoid immediately querying cloud again on redirect
   try {
     fs.writeFileSync(DB_FILE, JSON.stringify(store, null, 2));
   } catch (error) {
@@ -414,10 +426,12 @@ async function saveDB(store: DBStore): Promise<void> {
   }
 
   if (db) {
-    // Run sync in backgound to avoid API lag / timeout
-    triggerSync().catch(err => {
-      console.error("[FIREBASE] triggerSync uncaught error:", err);
-    });
+    try {
+      await syncToFirestore(store);
+      console.log("[FIREBASE] Cloud state successfully saved & synchronized.");
+    } catch (err) {
+      console.error("[FIREBASE] Cloud backup failed during saveDB:", err);
+    }
   }
 }
 
@@ -449,6 +463,15 @@ app.use(async (req, res, next) => {
   if (req.path.startsWith("/api/")) {
     try {
       await ensureFirestoreLoaded();
+      
+      // Pull latest from Firestore for multi-tab/multi-container consistency
+      const cloudStore = await fetchLatestFromFirestore();
+      if (cloudStore) {
+        cachedStore = cloudStore;
+        try {
+          fs.writeFileSync(DB_FILE, JSON.stringify(cloudStore, null, 2));
+        } catch (e) {}
+      }
     } catch (err) {
       console.error("[FIREBASE] Middleware ensure load failed:", err);
       // Reset the promise so we can retry on the next request
