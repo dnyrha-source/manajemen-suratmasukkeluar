@@ -264,19 +264,21 @@ async function syncToFirestore(store: DBStore) {
 
     // Support collection level sync
     const syncCollection = async (colName: string, items: any[]) => {
-      for (const item of items) {
-        if (item && item.id) {
-          await setDoc(doc(db, colName, item.id), item);
-        }
-      }
+      const validItems = items.filter(item => item && item.id);
+      
+      // Update/set documents in parallel
+      await Promise.all(
+        validItems.map(item => setDoc(doc(db, colName, item.id), item))
+      );
       
       const snap = await getDocs(collection(db, colName));
-      const currentIds = new Set(items.map(i => i.id).filter(id => !!id));
-      for (const docSnap of snap.docs) {
-        if (docSnap.id !== "settings" && !currentIds.has(docSnap.id)) {
-          await deleteDoc(docSnap.ref);
-        }
-      }
+      const currentIds = new Set(validItems.map(i => i.id));
+      
+      // Delete removed documents in parallel
+      const toDelete = snap.docs.filter(docSnap => docSnap.id !== "settings" && !currentIds.has(docSnap.id));
+      await Promise.all(
+        toDelete.map(docSnap => deleteDoc(docSnap.ref))
+      );
     };
 
     // 2. Sync all collections
@@ -377,6 +379,32 @@ function getDB(): DBStore {
   return INITIAL_STORE;
 }
 
+let isSyncing = false;
+let pendingSync = false;
+
+async function triggerSync(): Promise<void> {
+  if (!db) return;
+  if (isSyncing) {
+    pendingSync = true;
+    return;
+  }
+  
+  isSyncing = true;
+  pendingSync = false;
+  
+  try {
+    const store = getDB();
+    await syncToFirestore(store);
+  } catch (err) {
+    console.error("[FIREBASE] Error during background syncToFirestore:", err);
+  } finally {
+    isSyncing = false;
+    if (pendingSync) {
+      triggerSync().catch(err => console.error("[FIREBASE] triggerSync queue error:", err));
+    }
+  }
+}
+
 // Write database to cache, FS, and cloud
 async function saveDB(store: DBStore): Promise<void> {
   cachedStore = store;
@@ -387,11 +415,10 @@ async function saveDB(store: DBStore): Promise<void> {
   }
 
   if (db) {
-    try {
-      await syncToFirestore(store);
-    } catch (err) {
-      console.error("[FIREBASE] Cloud backup failed:", err);
-    }
+    // Run sync in backgound to avoid API lag / timeout
+    triggerSync().catch(err => {
+      console.error("[FIREBASE] triggerSync uncaught error:", err);
+    });
   }
 }
 
