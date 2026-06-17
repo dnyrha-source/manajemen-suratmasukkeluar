@@ -6,7 +6,6 @@
 import express, { Request, Response, NextFunction } from "express";
 import path from "path";
 import fs from "fs";
-import { createServer as createViteServer } from "vite";
 import { 
   User, 
   SuratMasuk, 
@@ -233,16 +232,7 @@ function hashPassword(password: string): string {
   return crypto.createHash("sha256").update(password).digest("hex");
 }
 
-// Read Firebase configuration dynamically from disk (fully compatible across ESM runtimes & Vercel)
-let firebaseConfig: any = null;
-try {
-  const firebaseConfigPath = path.join(process.cwd(), "firebase-applet-config.json");
-  if (fs.existsSync(firebaseConfigPath)) {
-    firebaseConfig = JSON.parse(fs.readFileSync(firebaseConfigPath, "utf-8"));
-  }
-} catch (err) {
-  console.error("[FIREBASE] Error reading firebase-applet-config.json:", err);
-}
+import firebaseConfig from "./firebase-applet-config.json";
 
 // In-Memory DB Cache
 let cachedStore: DBStore | null = null;
@@ -1405,6 +1395,7 @@ async function startServer() {
 
   // Vite middleware for development or Static server for production
   if (process.env.NODE_ENV !== "production") {
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
