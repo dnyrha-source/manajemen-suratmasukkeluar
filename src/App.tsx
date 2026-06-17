@@ -299,7 +299,7 @@ export default function App() {
                 {config?.instansi_kode || "DISDIK-V"}
               </span>
               <span className="text-[9px] text-slate-400 font-mono tracking-wider font-extrabold block truncate">
-                TATA NASKAH DIGITAL
+                MANAJEMEN SURAT
               </span>
             </div>
           </div>
@@ -625,7 +625,7 @@ export default function App() {
 
         <footer className="bg-white border-t border-slate-200 py-6 text-center text-[11px] text-slate-400 no-print select-none shrink-0 mt-auto">
           <div className="max-w-7xl mx-auto px-4">
-            <p>Sistem Informasi Manajemen Persuratan Digital • Sekretariat Utama Kantor Dinas Pendidikan Pemuda &amp; Olahraga</p>
+            <p>Sistem Informasi Manajemen Persuratan Digital • Perpustakaan Labschool Jakarta</p>
             <p className="mt-1 font-mono text-[9px] text-slate-300">Pola database cloud terintegrasi Google Spreadsheet API v4 • Cloud Environment v1.0.0</p>
           </div>
         </footer>
