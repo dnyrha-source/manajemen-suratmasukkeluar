@@ -240,6 +240,12 @@ let lastSyncedStore: DBStore | null = null;
 let lastLoadTime = 0;
 let currentLoadPromise: Promise<DBStore | null> | null = null;
 
+// Distributed container synchronization variables
+let localLastSyncedTime = 0;
+let lastSyncCheckTime = 0;
+let isSyncingToCloud = false;
+let pendingCloudSync = false;
+
 // Initialize Firebase SDK
 let db: Firestore | null = null;
 try {
@@ -405,13 +411,37 @@ function ensureFirestoreLoaded(): Promise<void> {
         cachedStore = cloudStore;
         lastSyncedStore = JSON.parse(JSON.stringify(cloudStore));
         lastLoadTime = Date.now();
-        console.log("[FIREBASE] Cache synchronized with cloud successfully.");
+        
+        // Read the sync metadata marker from cloud config
+        try {
+          const syncSnap = await getDoc(doc(db!, "config", "sync"));
+          if (syncSnap.exists()) {
+            localLastSyncedTime = syncSnap.data().lastUpdatedAt || Date.now();
+          } else {
+            localLastSyncedTime = Date.now();
+            await setDoc(doc(db!, "config", "sync"), { lastUpdatedAt: localLastSyncedTime });
+          }
+        } catch (syncErr) {
+          console.warn("[FIREBASE] Failed read/write config/sync during boot:", syncErr);
+          localLastSyncedTime = Date.now();
+        }
+        
+        lastSyncCheckTime = Date.now();
+        console.log("[FIREBASE] Cache synchronized with cloud successfully. Sync Time:", localLastSyncedTime);
       } else {
         console.log("[FIREBASE] Firestore has no user data. Seeding database to cloud...");
         const store = getDB();
         await syncToFirestore(store);
         lastSyncedStore = JSON.parse(JSON.stringify(store));
         lastLoadTime = Date.now();
+        
+        localLastSyncedTime = Date.now();
+        try {
+          await setDoc(doc(db!, "config", "sync"), { lastUpdatedAt: localLastSyncedTime });
+        } catch (syncErr) {
+          console.warn("[FIREBASE] Failed seeding config/sync during boot:", syncErr);
+        }
+        lastSyncCheckTime = Date.now();
         console.log("[FIREBASE] Seeded database to Firestore successfully.");
       }
     } catch (err) {
@@ -424,38 +454,47 @@ function ensureFirestoreLoaded(): Promise<void> {
   return firestoreLoadPromise;
 }
 
-// Fetch the absolute freshest data from Firestore with parallel request throttling
-async function fetchLatestFromFirestore(): Promise<DBStore | null> {
-  if (!db) return null;
+// Check if other processes updated Firestore, and load if necessary
+async function refreshCacheIfNeeded(): Promise<DBStore | null> {
+  if (!db) return cachedStore;
   const now = Date.now();
   
-  // 1-second TTL cache to avoid hitting Cloud limits during rapid simultaneous UI queries
-  if (cachedStore && (now - lastLoadTime < 1000)) {
+  // 5-second cache TTL to prevent querying the cloud on rapid consecutive HTTP API calls
+  if (cachedStore && (now - lastSyncCheckTime < 5000)) {
     return cachedStore;
   }
   
-  if (currentLoadPromise) {
-    return currentLoadPromise;
-  }
-  
-  currentLoadPromise = (async () => {
-    try {
+  try {
+    const syncDocSnap = await getDoc(doc(db, "config", "sync"));
+    let cloudLastSync = 0;
+    if (syncDocSnap.exists()) {
+      cloudLastSync = syncDocSnap.data().lastUpdatedAt || 0;
+    }
+    
+    // If the cloud sync timestamp is newer than our local container's sync time, we MUST reload!
+    if (cloudLastSync > localLastSyncedTime || !cachedStore) {
+      console.log(`[FIREBASE] Cloud state changed (${cloudLastSync} > ${localLastSyncedTime}). Reloading database...`);
       const cloudStore = await loadFromFirestore();
       if (cloudStore && cloudStore.users && cloudStore.users.length > 0) {
-        lastLoadTime = Date.now();
+        cachedStore = cloudStore;
         lastSyncedStore = JSON.parse(JSON.stringify(cloudStore));
-        return cloudStore;
+        localLastSyncedTime = cloudLastSync;
+        lastLoadTime = Date.now();
+        try {
+          fs.writeFileSync(DB_FILE, JSON.stringify(cloudStore, null, 2));
+        } catch (e) {}
       }
-      return null;
-    } catch (err) {
-      console.error("[FIREBASE] Error in fetchLatestFromFirestore:", err);
-      return null;
-    } finally {
-      currentLoadPromise = null;
+    } else {
+      // Up to date!
+      console.log("[FIREBASE] Cache is up to date with cloud state. Skipping heavy download.");
     }
-  })();
-  
-  return currentLoadPromise;
+    lastSyncCheckTime = Date.now();
+    return cachedStore;
+  } catch (err) {
+    console.error("[FIREBASE] Error during cache refresh check:", err);
+    // If check fails, fallback to existing memory cache without crashing
+    return cachedStore;
+  }
 }
 
 // Read database from FS or Cache
@@ -478,9 +517,52 @@ function getDB(): DBStore {
   return INITIAL_STORE;
 }
 
-// Write database to cache, FS, and cloud synchronously/atomically
-async function saveDB(store: DBStore): Promise<void> {
+// Trigger database sync to cloud in the background (non-blocking, fast)
+function triggerBackgroundSync() {
+  if (!db) return;
+  if (isSyncingToCloud) {
+    pendingCloudSync = true;
+    return;
+  }
+
+  isSyncingToCloud = true;
+  pendingCloudSync = false;
+
+  const currentStore = JSON.parse(JSON.stringify(getDB()));
   const oldStore = lastSyncedStore;
+
+  (async () => {
+    try {
+      if (oldStore) {
+        console.log("[FIREBASE] Starting background diff sync to Firestore...");
+        await syncDiffToFirestore(oldStore, currentStore);
+      } else {
+        console.log("[FIREBASE] Starting background full sync to Firestore...");
+        await syncToFirestore(currentStore);
+      }
+      
+      // Update sync marker doc on Firestore so other containers know we updated
+      const newSyncTime = Date.now();
+      await setDoc(doc(db!, "config", "sync"), { lastUpdatedAt: newSyncTime });
+      
+      lastSyncedStore = currentStore;
+      localLastSyncedTime = newSyncTime;
+      lastSyncCheckTime = Date.now();
+      console.log("[FIREBASE] Background cloud state successfully saved & synchronized.");
+    } catch (err) {
+      console.error("[FIREBASE] Cloud backup failed during background sync:", err);
+    } finally {
+      isSyncingToCloud = false;
+      // If there was a pending sync requested while we were syncing, run it now!
+      if (pendingCloudSync) {
+        triggerBackgroundSync();
+      }
+    }
+  })();
+}
+
+// Write database to cache and FS instantly, trigger cloud sync in background
+async function saveDB(store: DBStore): Promise<void> {
   cachedStore = store;
   lastLoadTime = Date.now(); // Mark as fresh to avoid immediately querying cloud again on redirect
   try {
@@ -490,17 +572,7 @@ async function saveDB(store: DBStore): Promise<void> {
   }
 
   if (db) {
-    try {
-      if (oldStore) {
-        await syncDiffToFirestore(oldStore, store);
-      } else {
-        await syncToFirestore(store);
-      }
-      lastSyncedStore = JSON.parse(JSON.stringify(store));
-      console.log("[FIREBASE] Cloud state successfully saved & synchronized.");
-    } catch (err) {
-      console.error("[FIREBASE] Cloud backup failed during saveDB:", err);
-    }
+    triggerBackgroundSync();
   }
 }
 
@@ -533,15 +605,8 @@ app.use(async (req, res, next) => {
     try {
       await ensureFirestoreLoaded();
       
-      // Pull latest from Firestore for multi-tab/multi-container consistency
-      const cloudStore = await fetchLatestFromFirestore();
-      if (cloudStore) {
-        cachedStore = cloudStore;
-        lastSyncedStore = JSON.parse(JSON.stringify(cloudStore));
-        try {
-          fs.writeFileSync(DB_FILE, JSON.stringify(cloudStore, null, 2));
-        } catch (e) {}
-      }
+      // Check cloud sync doc / update local cache if cloud state has changed
+      await refreshCacheIfNeeded();
     } catch (err) {
       console.error("[FIREBASE] Middleware ensure load failed:", err);
       // Reset the promise so we can retry on the next request
