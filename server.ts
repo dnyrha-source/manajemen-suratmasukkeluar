@@ -293,6 +293,63 @@ async function syncToFirestore(store: DBStore) {
   }
 }
 
+// Sync with diff to Firestore (extremely fast, minimizes Cloud operations and lag)
+async function syncDiffToFirestore(oldStore: DBStore, newStore: DBStore) {
+  if (!db) return;
+  try {
+    // 1. Config diff
+    if (!oldStore || !oldStore.config || JSON.stringify(oldStore.config) !== JSON.stringify(newStore.config)) {
+      await setDoc(doc(db, "config", "settings"), newStore.config);
+      console.log("[FIREBASE] Config settings updated on Cloud Firestore.");
+    }
+
+    const syncCollectionDiff = async (colName: string, oldItems: any[], newItems: any[]) => {
+      const validNewItems = (newItems || []).filter(item => item && item.id);
+      const validOldItems = (oldItems || []).filter(item => item && item.id);
+
+      // Map old items by id to easily compare content
+      const oldMap = new Map(validOldItems.map(item => [item.id, JSON.stringify(item)]));
+      
+      // Find items to write (added or modified)
+      const toWrite = validNewItems.filter(item => {
+        const oldStr = oldMap.get(item.id);
+        return !oldStr || oldStr !== JSON.stringify(item);
+      });
+
+      // Find items to delete (exist in old but not in new)
+      const newIds = new Set(validNewItems.map(item => item.id));
+      const toDelete = validOldItems.filter(item => !newIds.has(item.id));
+
+      // Batch setDoc calls in parallel for this collection
+      if (toWrite.length > 0) {
+        await Promise.all(
+          toWrite.map(item => setDoc(doc(db!, colName, item.id), item))
+        );
+        console.log(`[FIREBASE] '${colName}' diff: Wrote/Updated ${toWrite.length} documents.`);
+      }
+
+      // Batch deleteDoc calls in parallel for this collection
+      if (toDelete.length > 0) {
+        await Promise.all(
+          toDelete.map(item => deleteDoc(doc(db!, colName, item.id)))
+        );
+        console.log(`[FIREBASE] '${colName}' diff: Deleted ${toDelete.length} documents.`);
+      }
+    };
+
+    // Run collection diff syncs fully in parallel
+    await Promise.all([
+      syncCollectionDiff("users", oldStore.users, newStore.users),
+      syncCollectionDiff("surat_masuk", oldStore.surat_masuk, newStore.surat_masuk),
+      syncCollectionDiff("surat_keluar", oldStore.surat_keluar, newStore.surat_keluar),
+      syncCollectionDiff("log_aktivitas", oldStore.log_aktivitas, newStore.log_aktivitas)
+    ]);
+  } catch (err) {
+    console.error("[FIREBASE] syncDiffToFirestore error, falling back to full sync:", err);
+    await syncToFirestore(newStore);
+  }
+}
+
 // Load whole state from Firestore
 async function loadFromFirestore(): Promise<DBStore | null> {
   if (!db) return null;
@@ -417,6 +474,7 @@ function getDB(): DBStore {
 
 // Write database to cache, FS, and cloud synchronously/atomically
 async function saveDB(store: DBStore): Promise<void> {
+  const oldStore = cachedStore ? JSON.parse(JSON.stringify(cachedStore)) : null;
   cachedStore = store;
   lastLoadTime = Date.now(); // Mark as fresh to avoid immediately querying cloud again on redirect
   try {
@@ -427,7 +485,11 @@ async function saveDB(store: DBStore): Promise<void> {
 
   if (db) {
     try {
-      await syncToFirestore(store);
+      if (oldStore) {
+        await syncDiffToFirestore(oldStore, store);
+      } else {
+        await syncToFirestore(store);
+      }
       console.log("[FIREBASE] Cloud state successfully saved & synchronized.");
     } catch (err) {
       console.error("[FIREBASE] Cloud backup failed during saveDB:", err);
