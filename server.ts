@@ -236,6 +236,7 @@ import firebaseConfig from "./firebase-applet-config.json";
 
 // In-Memory DB Cache
 let cachedStore: DBStore | null = null;
+let lastSyncedStore: DBStore | null = null;
 let lastLoadTime = 0;
 let currentLoadPromise: Promise<DBStore | null> | null = null;
 
@@ -402,12 +403,14 @@ function ensureFirestoreLoaded(): Promise<void> {
       const cloudStore = await loadFromFirestore();
       if (cloudStore && cloudStore.users && cloudStore.users.length > 0) {
         cachedStore = cloudStore;
+        lastSyncedStore = JSON.parse(JSON.stringify(cloudStore));
         lastLoadTime = Date.now();
         console.log("[FIREBASE] Cache synchronized with cloud successfully.");
       } else {
         console.log("[FIREBASE] Firestore has no user data. Seeding database to cloud...");
         const store = getDB();
         await syncToFirestore(store);
+        lastSyncedStore = JSON.parse(JSON.stringify(store));
         lastLoadTime = Date.now();
         console.log("[FIREBASE] Seeded database to Firestore successfully.");
       }
@@ -440,6 +443,7 @@ async function fetchLatestFromFirestore(): Promise<DBStore | null> {
       const cloudStore = await loadFromFirestore();
       if (cloudStore && cloudStore.users && cloudStore.users.length > 0) {
         lastLoadTime = Date.now();
+        lastSyncedStore = JSON.parse(JSON.stringify(cloudStore));
         return cloudStore;
       }
       return null;
@@ -463,18 +467,20 @@ function getDB(): DBStore {
     if (fs.existsSync(DB_FILE)) {
       const content = fs.readFileSync(DB_FILE, "utf-8");
       cachedStore = JSON.parse(content);
+      lastSyncedStore = JSON.parse(JSON.stringify(cachedStore));
       return cachedStore!;
     }
   } catch (error) {
     console.error("Database cached read error, falling back to seed:", error);
   }
   cachedStore = INITIAL_STORE;
+  lastSyncedStore = JSON.parse(JSON.stringify(INITIAL_STORE));
   return INITIAL_STORE;
 }
 
 // Write database to cache, FS, and cloud synchronously/atomically
 async function saveDB(store: DBStore): Promise<void> {
-  const oldStore = cachedStore ? JSON.parse(JSON.stringify(cachedStore)) : null;
+  const oldStore = lastSyncedStore;
   cachedStore = store;
   lastLoadTime = Date.now(); // Mark as fresh to avoid immediately querying cloud again on redirect
   try {
@@ -490,6 +496,7 @@ async function saveDB(store: DBStore): Promise<void> {
       } else {
         await syncToFirestore(store);
       }
+      lastSyncedStore = JSON.parse(JSON.stringify(store));
       console.log("[FIREBASE] Cloud state successfully saved & synchronized.");
     } catch (err) {
       console.error("[FIREBASE] Cloud backup failed during saveDB:", err);
@@ -530,6 +537,7 @@ app.use(async (req, res, next) => {
       const cloudStore = await fetchLatestFromFirestore();
       if (cloudStore) {
         cachedStore = cloudStore;
+        lastSyncedStore = JSON.parse(JSON.stringify(cloudStore));
         try {
           fs.writeFileSync(DB_FILE, JSON.stringify(cloudStore, null, 2));
         } catch (e) {}
