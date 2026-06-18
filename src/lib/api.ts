@@ -19,6 +19,22 @@ const getHeaders = () => {
   };
 };
 
+async function handleErrorResponse(res: Response, defaultMsg: string): Promise<never> {
+  let message = defaultMsg;
+  try {
+    const text = await res.text();
+    try {
+      const data = JSON.parse(text);
+      message = data.message || data.error || defaultMsg;
+    } catch {
+      message = text || `Error ${res.status}: ${defaultMsg}`;
+    }
+  } catch {
+    message = `Error ${res.status}: ${defaultMsg}`;
+  }
+  throw new Error(message);
+}
+
 export async function loginApi(username: string, password: string) {
   const res = await fetch("/api/auth/login", {
     method: "POST",
@@ -26,8 +42,7 @@ export async function loginApi(username: string, password: string) {
     body: JSON.stringify({ username, password })
   });
   if (!res.ok) {
-    const err = await res.json();
-    throw new Error(err.message || "Gagal Login");
+    await handleErrorResponse(res, "Gagal Login");
   }
   return res.json();
 }
@@ -47,8 +62,7 @@ export async function changePasswordApi(oldPassword: string, newPassword: string
     body: JSON.stringify({ oldPassword, newPassword })
   });
   if (!res.ok) {
-    const err = await res.json();
-    throw new Error(err.message || "Gagal mengubah password");
+    await handleErrorResponse(res, "Gagal mengubah password");
   }
   return res.json();
 }
@@ -56,8 +70,7 @@ export async function changePasswordApi(oldPassword: string, newPassword: string
 export async function getUsersApi(): Promise<User[]> {
   const res = await fetch("/api/users", { headers: getHeaders() });
   if (!res.ok) {
-    const err = await res.json();
-    throw new Error(err.message || "Gagal mengambil data user");
+    await handleErrorResponse(res, "Gagal mengambil data user");
   }
   return res.json();
 }
@@ -65,8 +78,7 @@ export async function getUsersApi(): Promise<User[]> {
 export async function getProfileApi(): Promise<User> {
   const res = await fetch("/api/auth/me", { headers: getHeaders() });
   if (!res.ok) {
-    const err = await res.json();
-    throw new Error(err.message || "Gagal mengambil data profil");
+    await handleErrorResponse(res, "Gagal mengambil data profil");
   }
   return res.json();
 }
@@ -78,8 +90,7 @@ export async function createUserApi(data: Partial<User> & { password?: string })
     body: JSON.stringify(data)
   });
   if (!res.ok) {
-    const err = await res.json();
-    throw new Error(err.message || "Gagal membuat user");
+    await handleErrorResponse(res, "Gagal membuat user");
   }
   return res.json();
 }
@@ -91,8 +102,7 @@ export async function updateUserApi(id: string, data: Partial<User> & { password
     body: JSON.stringify(data)
   });
   if (!res.ok) {
-    const err = await res.json();
-    throw new Error(err.message || "Gagal memperbarui user");
+    await handleErrorResponse(res, "Gagal memperbarui user");
   }
   return res.json();
 }
@@ -103,14 +113,15 @@ export async function deleteUserApi(id: string): Promise<void> {
     headers: getHeaders()
   });
   if (!res.ok) {
-    const err = await res.json();
-    throw new Error(err.message || "Gagal menghapus pengguna");
+    await handleErrorResponse(res, "Gagal menghapus pengguna");
   }
 }
 
 export async function getSuratMasukApi(): Promise<SuratMasuk[]> {
   const res = await fetch("/api/surat-masuk", { headers: getHeaders() });
-  if (!res.ok) throw new Error("Gagal mengambil data surat masuk");
+  if (!res.ok) {
+    await handleErrorResponse(res, "Gagal mengambil data surat masuk");
+  }
   return res.json();
 }
 
@@ -121,8 +132,7 @@ export async function createSuratMasukApi(data: Partial<SuratMasuk>): Promise<Su
     body: JSON.stringify(data)
   });
   if (!res.ok) {
-    const err = await res.json();
-    throw new Error(err.message || "Gagal membuat surat masuk");
+    await handleErrorResponse(res, "Gagal membuat surat masuk");
   }
   return res.json();
 }
@@ -134,8 +144,7 @@ export async function updateSuratMasukApi(id: string, data: Partial<SuratMasuk>)
     body: JSON.stringify(data)
   });
   if (!res.ok) {
-    const err = await res.json();
-    throw new Error(err.message || "Gagal memperbarui surat masuk");
+    await handleErrorResponse(res, "Gagal memperbarui surat masuk");
   }
   return res.json();
 }
@@ -146,14 +155,15 @@ export async function deleteSuratMasukApi(id: string): Promise<void> {
     headers: getHeaders()
   });
   if (!res.ok) {
-    const err = await res.json();
-    throw new Error(err.message || "Gagal menghapus surat masuk");
+    await handleErrorResponse(res, "Gagal menghapus surat masuk");
   }
 }
 
 export async function getSuratKeluarApi(): Promise<SuratKeluar[]> {
   const res = await fetch("/api/surat-keluar", { headers: getHeaders() });
-  if (!res.ok) throw new Error("Gagal mengambil data surat keluar");
+  if (!res.ok) {
+    await handleErrorResponse(res, "Gagal mengambil data surat keluar");
+  }
   return res.json();
 }
 
@@ -164,8 +174,7 @@ export async function createSuratKeluarApi(data: Partial<SuratKeluar>): Promise<
     body: JSON.stringify(data)
   });
   if (!res.ok) {
-    const err = await res.json();
-    throw new Error(err.message || "Gagal membuat surat keluar");
+    await handleErrorResponse(res, "Gagal membuat surat keluar");
   }
   return res.json();
 }
@@ -177,8 +186,7 @@ export async function updateSuratKeluarApi(id: string, data: Partial<SuratKeluar
     body: JSON.stringify(data)
   });
   if (!res.ok) {
-    const err = await res.json();
-    throw new Error(err.message || "Gagal memperbarui surat keluar");
+    await handleErrorResponse(res, "Gagal memperbarui surat keluar");
   }
   return res.json();
 }
@@ -189,26 +197,31 @@ export async function deleteSuratKeluarApi(id: string): Promise<void> {
     headers: getHeaders()
   });
   if (!res.ok) {
-    const err = await res.json();
-    throw new Error(err.message || "Gagal menghapus surat keluar");
+    await handleErrorResponse(res, "Gagal menghapus surat keluar");
   }
 }
 
 export async function getLogsApi(): Promise<ActivityLog[]> {
   const res = await fetch("/api/logs", { headers: getHeaders() });
-  if (!res.ok) throw new Error("Gagal mengambil log aktivitas");
+  if (!res.ok) {
+    await handleErrorResponse(res, "Gagal mengambil log aktivitas");
+  }
   return res.json();
 }
 
 export async function getPublicConfigApi(): Promise<{ instansi_nama: string; instansi_kode: string; logo_url?: string }> {
   const res = await fetch("/api/config/public");
-  if (!res.ok) throw new Error("Gagal mengambil konfigurasi publik");
+  if (!res.ok) {
+    await handleErrorResponse(res, "Gagal mengambil konfigurasi publik");
+  }
   return res.json();
 }
 
 export async function getConfigApi(): Promise<ConfigSettings> {
   const res = await fetch("/api/config", { headers: getHeaders() });
-  if (!res.ok) throw new Error("Gagal mengambil konfigurasi");
+  if (!res.ok) {
+    await handleErrorResponse(res, "Gagal mengambil konfigurasi");
+  }
   return res.json();
 }
 
@@ -219,8 +232,7 @@ export async function updateConfigApi(data: Partial<ConfigSettings>): Promise<Co
     body: JSON.stringify(data)
   });
   if (!res.ok) {
-    const err = await res.json();
-    throw new Error(err.message || "Gagal memperbarui konfigurasi");
+    await handleErrorResponse(res, "Gagal memperbarui konfigurasi");
   }
   return res.json();
 }
@@ -242,8 +254,7 @@ export async function syncSheetApi(gToken?: string): Promise<{
     headers: gToken ? { ...headers, "X-Google-Token": gToken } : headers
   });
   if (!res.ok) {
-    const err = await res.json();
-    throw new Error(err.message || "Gagal sinkronisasi Spreadsheet");
+    await handleErrorResponse(res, "Gagal sinkronisasi Spreadsheet");
   }
   return res.json();
 }
@@ -254,6 +265,8 @@ export async function summarizeWithAiApi(content: string): Promise<{ summary: st
     headers: getHeaders(),
     body: JSON.stringify({ content })
   });
-  if (!res.ok) throw new Error("Gagal membuat ringkasan AI");
+  if (!res.ok) {
+    await handleErrorResponse(res, "Gagal membuat ringkasan AI");
+  }
   return res.json();
 }

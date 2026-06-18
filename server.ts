@@ -517,52 +517,9 @@ function getDB(): DBStore {
   return INITIAL_STORE;
 }
 
-// Trigger database sync to cloud in the background (non-blocking, fast)
-function triggerBackgroundSync() {
-  if (!db) return;
-  if (isSyncingToCloud) {
-    pendingCloudSync = true;
-    return;
-  }
-
-  isSyncingToCloud = true;
-  pendingCloudSync = false;
-
-  const currentStore = JSON.parse(JSON.stringify(getDB()));
-  const oldStore = lastSyncedStore;
-
-  (async () => {
-    try {
-      if (oldStore) {
-        console.log("[FIREBASE] Starting background diff sync to Firestore...");
-        await syncDiffToFirestore(oldStore, currentStore);
-      } else {
-        console.log("[FIREBASE] Starting background full sync to Firestore...");
-        await syncToFirestore(currentStore);
-      }
-      
-      // Update sync marker doc on Firestore so other containers know we updated
-      const newSyncTime = Date.now();
-      await setDoc(doc(db!, "config", "sync"), { lastUpdatedAt: newSyncTime });
-      
-      lastSyncedStore = currentStore;
-      localLastSyncedTime = newSyncTime;
-      lastSyncCheckTime = Date.now();
-      console.log("[FIREBASE] Background cloud state successfully saved & synchronized.");
-    } catch (err) {
-      console.error("[FIREBASE] Cloud backup failed during background sync:", err);
-    } finally {
-      isSyncingToCloud = false;
-      // If there was a pending sync requested while we were syncing, run it now!
-      if (pendingCloudSync) {
-        triggerBackgroundSync();
-      }
-    }
-  })();
-}
-
-// Write database to cache and FS instantly, trigger cloud sync in background
+// Write database to cache, FS, and cloud synchronously/atomically
 async function saveDB(store: DBStore): Promise<void> {
+  const oldStore = lastSyncedStore;
   cachedStore = store;
   lastLoadTime = Date.now(); // Mark as fresh to avoid immediately querying cloud again on redirect
   try {
@@ -572,12 +529,30 @@ async function saveDB(store: DBStore): Promise<void> {
   }
 
   if (db) {
-    triggerBackgroundSync();
+    try {
+      if (oldStore) {
+        console.log("[FIREBASE] Syncing diff to Firestore...");
+        await syncDiffToFirestore(oldStore, store);
+      } else {
+        console.log("[FIREBASE] Syncing full DB to Firestore...");
+        await syncToFirestore(store);
+      }
+      
+      const newSyncTime = Date.now();
+      await setDoc(doc(db, "config", "sync"), { lastUpdatedAt: newSyncTime });
+      
+      lastSyncedStore = JSON.parse(JSON.stringify(store));
+      localLastSyncedTime = newSyncTime;
+      lastSyncCheckTime = Date.now();
+      console.log("[FIREBASE] Cloud state successfully saved and synchronized. Timestamp:", newSyncTime);
+    } catch (err) {
+      console.error("[FIREBASE] Cloud synchronization failed:", err);
+    }
   }
 }
 
 // Log action helper
-async function addLog(userId: string, username: string, aksi: string, modul: ActivityLog['modul'], dataId: string): Promise<void> {
+async function addLog(userId: string, username: string, aksi: string, modul: ActivityLog['modul'], dataId: string, skipCloudSave = false): Promise<void> {
   const store = getDB();
   const newLog: ActivityLog = {
     id: `log_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
@@ -589,7 +564,9 @@ async function addLog(userId: string, username: string, aksi: string, modul: Act
     waktu: new Date().toISOString()
   };
   store.log_aktivitas.unshift(newLog); // Prepend so newest is first
-  await saveDB(store);
+  if (!skipCloudSave) {
+    await saveDB(store);
+  }
 }
 
 const app = express();
@@ -732,9 +709,9 @@ if (!process.env.VERCEL && db) {
     }
 
     dbUser.password_hash = hashPassword(newPassword);
+    await addLog(user.id, user.username, "Mengubah password sendiri", "Dashboard", user.id, true);
     await saveDB(store);
 
-    await addLog(user.id, user.username, "Mengubah password sendiri", "Dashboard", user.id);
     res.json({ success: true, message: "Password berhasil diperbarui." });
   });
 
@@ -777,9 +754,8 @@ if (!process.env.VERCEL && db) {
     };
 
     store.users.push(newUser);
+    await addLog(requestUser.id, requestUser.username, `Membuat akun pengguna baru: ${username}`, "Manajemen Pengguna", newUser.id, true);
     await saveDB(store);
-
-    await addLog(requestUser.id, requestUser.username, `Membuat akun pengguna baru: ${username}`, "Manajemen Pengguna", newUser.id);
 
     const { password_hash, ...safeUser } = newUser;
     res.status(201).json(safeUser);
@@ -815,8 +791,8 @@ if (!process.env.VERCEL && db) {
       dbUser.aktif = aktif;
     }
 
+    await addLog(requestUser.id, requestUser.username, `Memperbarui akun pengguna: ${dbUser.username}`, "Manajemen Pengguna", dbUser.id, true);
     await saveDB(store);
-    await addLog(requestUser.id, requestUser.username, `Memperbarui akun pengguna: ${dbUser.username}`, "Manajemen Pengguna", dbUser.id);
 
     const { password_hash, ...safeUser } = dbUser;
     res.json(safeUser);
@@ -845,8 +821,8 @@ if (!process.env.VERCEL && db) {
     }
 
     store.users.splice(dbUserIndex, 1);
+    await addLog(requestUser.id, requestUser.username, `Menghapus akun pengguna: ${dbUser.username}`, "Manajemen Pengguna", dbUser.id, true);
     await saveDB(store);
-    await addLog(requestUser.id, requestUser.username, `Menghapus akun pengguna: ${dbUser.username}`, "Manajemen Pengguna", dbUser.id);
 
     res.json({ success: true, message: "Pengguna berhasil dihapus." });
   });
@@ -919,9 +895,9 @@ if (!process.env.VERCEL && db) {
     };
 
     store.surat_masuk.push(newSurat);
+    await addLog(requestUser.id, requestUser.username, `Menambah Surat Masuk No. Agenda ${no_agenda}`, "Surat Masuk", newSurat.id, true);
     await saveDB(store);
 
-    await addLog(requestUser.id, requestUser.username, `Menambah Surat Masuk No. Agenda ${no_agenda}`, "Surat Masuk", newSurat.id);
     res.status(201).json(newSurat);
   });
 
@@ -969,8 +945,8 @@ if (!process.env.VERCEL && db) {
       surat.lampiran_url = lampiran_url;
     }
 
+    await addLog(requestUser.id, requestUser.username, `Mengubah Surat Masuk No. Agenda ${surat.no_agenda}`, "Surat Masuk", id, true);
     await saveDB(store);
-    await addLog(requestUser.id, requestUser.username, `Mengubah Surat Masuk No. Agenda ${surat.no_agenda}`, "Surat Masuk", id);
     res.json(surat);
   });
 
@@ -991,9 +967,9 @@ if (!process.env.VERCEL && db) {
 
     const agendaNo = store.surat_masuk[index].no_agenda;
     store.surat_masuk.splice(index, 1);
+    await addLog(requestUser.id, requestUser.username, `Menghapus Surat Masuk No. Agenda ${agendaNo}`, "Surat Masuk", id, true);
     await saveDB(store);
 
-    await addLog(requestUser.id, requestUser.username, `Menghapus Surat Masuk No. Agenda ${agendaNo}`, "Surat Masuk", id);
     res.json({ success: true, message: "Surat masuk berhasil dihapus." });
   });
 
@@ -1069,9 +1045,9 @@ if (!process.env.VERCEL && db) {
     };
 
     store.surat_keluar.push(newSurat);
+    await addLog(requestUser.id, requestUser.username, `Membuat Surat Keluar No. Surat ${formattedNoSurat}`, "Surat Keluar", newSurat.id, true);
     await saveDB(store);
 
-    await addLog(requestUser.id, requestUser.username, `Membuat Surat Keluar No. Surat ${formattedNoSurat}`, "Surat Keluar", newSurat.id);
     res.status(201).json(newSurat);
   });
 
@@ -1119,8 +1095,8 @@ if (!process.env.VERCEL && db) {
       surat.lampiran_url = lampiran_url;
     }
 
+    await addLog(requestUser.id, requestUser.username, `Mengubah Surat Keluar No. Surat ${surat.no_surat}`, "Surat Keluar", id, true);
     await saveDB(store);
-    await addLog(requestUser.id, requestUser.username, `Mengubah Surat Keluar No. Surat ${surat.no_surat}`, "Surat Keluar", id);
     res.json(surat);
   });
 
@@ -1140,9 +1116,9 @@ if (!process.env.VERCEL && db) {
 
     const suratNo = store.surat_keluar[index].no_surat;
     store.surat_keluar.splice(index, 1);
+    await addLog(requestUser.id, requestUser.username, `Menghapus Surat Keluar No. Surat ${suratNo}`, "Surat Keluar", id, true);
     await saveDB(store);
 
-    await addLog(requestUser.id, requestUser.username, `Menghapus Surat Keluar No. Surat ${suratNo}`, "Surat Keluar", id);
     res.json({ success: true, message: "Surat keluar berhasil dihapus." });
   });
 
@@ -1190,8 +1166,8 @@ if (!process.env.VERCEL && db) {
     if (apps_script_url !== undefined) store.config.apps_script_url = apps_script_url;
     if (logo_url !== undefined) store.config.logo_url = logo_url;
 
+    await addLog(requestUser.id, requestUser.username, "Memperbarui konfigurasi sistem", "Pengaturan", "config", true);
     await saveDB(store);
-    await addLog(requestUser.id, requestUser.username, "Memperbarui konfigurasi sistem", "Pengaturan", "config");
     res.json(store.config);
   });
 
@@ -1303,9 +1279,8 @@ if (!process.env.VERCEL && db) {
 
         // Update database connection state
         store.config.koneksi_status = "Connected";
+        await addLog(requestUser.id, requestUser.username, "Sinkronisasi ke Google Sheet sukses (via Apps Script)", "Pengaturan", "config", true);
         await saveDB(store);
-
-        await addLog(requestUser.id, requestUser.username, "Sinkronisasi ke Google Sheet sukses (via Apps Script)", "Pengaturan", "config");
 
         return res.json({
           success: true,
@@ -1538,9 +1513,8 @@ if (!process.env.VERCEL && db) {
 
       // Save database connection state
       store.config.koneksi_status = "Connected";
+      await addLog(requestUser.id, requestUser.username, `Sinkronisasi dinas ke Google Spreadsheet ID: ${spreadsheetId}`, "Pengaturan", "config", true);
       await saveDB(store);
-
-      await addLog(requestUser.id, requestUser.username, `Sinkronisasi dinas ke Google Spreadsheet ID: ${spreadsheetId}`, "Pengaturan", "config");
 
       res.json({
         success: true,
