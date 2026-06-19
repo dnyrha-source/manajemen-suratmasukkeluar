@@ -264,12 +264,18 @@ try {
   console.error("[FIREBASE] Failed to initialize Firestore:", err);
 }
 
+// Deeply clean objects of 'undefined' fields before syncing to Firestore
+function cleanForFirestore<T>(obj: T): T {
+  if (obj === undefined || obj === null) return obj;
+  return JSON.parse(JSON.stringify(obj));
+}
+
 // Sync local cache to Firestore in background
 async function syncToFirestore(store: DBStore) {
   if (!db) return;
   try {
     // 1. Sync global settings
-    await setDoc(doc(db, "config", "settings"), store.config);
+    await setDoc(doc(db, "config", "settings"), cleanForFirestore(store.config));
 
     // Support collection level sync
     const syncCollection = async (colName: string, items: any[]) => {
@@ -277,7 +283,7 @@ async function syncToFirestore(store: DBStore) {
       
       // Update/set documents in parallel
       await Promise.all(
-        validItems.map(item => setDoc(doc(db, colName, item.id), item))
+        validItems.map(item => setDoc(doc(db, colName, item.id), cleanForFirestore(item)))
       );
       
       const snap = await getDocs(collection(db, colName));
@@ -306,7 +312,7 @@ async function syncDiffToFirestore(oldStore: DBStore, newStore: DBStore) {
   try {
     // 1. Config diff
     if (!oldStore || !oldStore.config || JSON.stringify(oldStore.config) !== JSON.stringify(newStore.config)) {
-      await setDoc(doc(db, "config", "settings"), newStore.config);
+      await setDoc(doc(db, "config", "settings"), cleanForFirestore(newStore.config));
       console.log("[FIREBASE] Config settings updated on Cloud Firestore.");
     }
 
@@ -330,7 +336,7 @@ async function syncDiffToFirestore(oldStore: DBStore, newStore: DBStore) {
       // Batch setDoc calls in parallel for this collection
       if (toWrite.length > 0) {
         await Promise.all(
-          toWrite.map(item => setDoc(doc(db!, colName, item.id), item))
+          toWrite.map(item => setDoc(doc(db!, colName, item.id), cleanForFirestore(item)))
         );
         console.log(`[FIREBASE] '${colName}' diff: Wrote/Updated ${toWrite.length} documents.`);
       }
