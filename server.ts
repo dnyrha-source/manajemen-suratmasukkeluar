@@ -264,10 +264,31 @@ try {
   console.error("[FIREBASE] Failed to initialize Firestore:", err);
 }
 
-// Deeply clean objects of 'undefined' fields before syncing to Firestore
-function cleanForFirestore<T>(obj: T): T {
+// Deeply clean objects of 'undefined' fields before syncing to Firestore, and scrub large base64 attachments to fit limits
+function cleanForFirestore(obj: any): any {
   if (obj === undefined || obj === null) return obj;
-  return JSON.parse(JSON.stringify(obj));
+  
+  // Clone to avoid modifying the original in-memory cache
+  const cloned = JSON.parse(JSON.stringify(obj));
+  
+  const scrubItem = (item: any) => {
+    if (item && typeof item === "object") {
+      if (typeof item.lampiran_url === "string" && item.lampiran_url.startsWith("data:")) {
+        console.log(`[FIREBASE] Scrubbing large attachment base64 from Firestore for item: ${item.id}`);
+        item.lampiran_url = `local-file-ref:${item.id}`;
+      }
+    }
+  };
+
+  if (Array.isArray(cloned)) {
+    cloned.forEach(scrubItem);
+  } else if (cloned && typeof cloned === "object") {
+    if (cloned.surat_masuk) cloned.surat_masuk.forEach(scrubItem);
+    if (cloned.surat_keluar) cloned.surat_keluar.forEach(scrubItem);
+    scrubItem(cloned);
+  }
+  
+  return cloned;
 }
 
 // Sync local cache to Firestore in background
@@ -393,6 +414,34 @@ async function loadFromFirestore(): Promise<DBStore | null> {
 
   // Sort newest logs first
   log_aktivitas.sort((a, b) => new Date(b.waktu).getTime() - new Date(a.waktu).getTime());
+
+  // === RESTORE LARGE ATTACHMENTS FROM LOCAL DB CACHE ===
+  let rawLocalStore: DBStore | null = null;
+  try {
+    if (fs.existsSync(DB_FILE)) {
+      rawLocalStore = JSON.parse(fs.readFileSync(DB_FILE, "utf-8"));
+    }
+  } catch (err) {
+    console.warn("[FIREBASE] Could not read local file during restore:", err);
+  }
+
+  const localStore = rawLocalStore || cachedStore;
+
+  if (localStore) {
+    const restoreItem = (colName: "surat_masuk" | "surat_keluar", item: any) => {
+      if (item && typeof item.lampiran_url === "string" && item.lampiran_url.startsWith("local-file-ref:")) {
+        const localItem = (localStore[colName] as any[] || []).find(x => x.id === item.id);
+        if (localItem && typeof localItem.lampiran_url === "string" && localItem.lampiran_url.startsWith("data:")) {
+          console.log(`[FIREBASE] Restored large base64 attachment for ${item.id} from local cache.`);
+          item.lampiran_url = localItem.lampiran_url;
+        }
+      }
+    };
+
+    surat_masuk.forEach(s => restoreItem("surat_masuk", s));
+    surat_keluar.forEach(s => restoreItem("surat_keluar", s));
+  }
+  // ==========================================
 
   return {
     users: users.filter(u => !!u.id),
